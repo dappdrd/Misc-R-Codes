@@ -1,5 +1,3 @@
-###DD: Installs required packages
-
 if(!require("R2jags")) {
   install.packages("R2jags")
   library("R2jags")
@@ -21,17 +19,11 @@ if(!require("loo")) {
   library("loo")
 }
 
-
-
-
-
-###DD: Helper Functions
-
 ## better round
 Re2prec <- function(x,map="round",prec=1) {
   ## 'map' can be round, floor, or ceiling
   ## 'prec' is nearest value (eg, 0.1 means to nearest tenth); default 1 gives normal behavior
-  if(prec<=0) {stop("\"prec\" cannot be less than or equal to 0") }
+  if(prec<=0) { stop("\"prec\" cannot be less than or equal to 0") }
   do.call(map,list(x/prec))*prec
 }
 ## colVars; from Gelman
@@ -71,13 +63,12 @@ waic <- function(log_lik) {
               se=se))
 }
 
-
 ## 1. file with escapement data
 ## [n_yrs x 2] matrix of obs counts; 1st col is calendar yr
-fn_esc <- "SkagitSFCKEsc.csv"
+fn_esc <- "SkagitSPCKEsc.csv"
 ## 2. file with age comp data
 ## [n_yrs x (1+A)]; 1st col is calendar yr
-fn_age <- "SkagitSFCKAge.csv"
+fn_age <- "SkagitSPCKAge.csv"
 ## min & max ages
 age_min <- 2
 age_max <- 5
@@ -85,68 +76,35 @@ age_max <- 5
 age_skip <- 0
 ## 3. file with harvest data
 ## [n_yrs x 2] matrix of obs catch; 1st col is calendar yr
-fn_harv <- "SkagitSFCKCatch.csv"
+fn_harv <- "SkagitSPCKCatch.csv"
 ## upper threshold for Gelman & Rubin's (1992) potential scale reduction factor (Rhat).
 Rhat_thresh <- 1.1
 ## URL for example data files
 ## set to NULL if using a local folder/directory
 ex_url <- "https://raw.githubusercontent.com/casruff/Skagit-Chinook-run-reconstruction/master/"
 
-
-
-# ## 1. file with escapement data
-# ## [n_yrs x 2] matrix of obs counts; 1st col is calendar yr
-# fn_esc <- "SkagitSPCKEsc.csv"
-# ## 2. file with age comp data
-# ## [n_yrs x (1+A)]; 1st col is calendar yr
-# fn_age <- "SkagitSPCKAge.csv"
-# ## min & max ages
-# age_min <- 2
-# age_max <- 5
-# ## years, if any, of age-comp to skip; see below
-# age_skip <- 0
-# ## 3. file with harvest data
-# ## [n_yrs x 2] matrix of obs catch; 1st col is calendar yr
-# fn_harv <- "SkagitSPCKCatch.csv"
-# ## upper threshold for Gelman & Rubin's (1992) potential scale reduction factor (Rhat).
-# Rhat_thresh <- 1.1
-# ## URL for example data files
-# ## set to NULL if using a local folder/directory
-# ex_url <- "https://raw.githubusercontent.com/casruff/Skagit-Chinook-run-reconstruction/master/"
-
-
-
-###DD: Loads escapement data
-###DD: Gets escapement in years from 1983-2014
-#dat_yrs <- seq(1983,2014,1)
-dat_yrs <- seq(1992,2014,1)
-##dat_yrs <- seq(1986,2014,1)
+dat_yrs <- seq(1986,2016,1)
 ## escapement
 dat_esc <- read.csv(text = getURL(paste0(ex_url,fn_esc)))
 dat_esc <- dat_esc[which(dat_esc$year %in% dat_yrs),]
 ## number of years of data
 n_yrs <- length(dat_yrs)
+
 ## get first & last years
 yr_frst <- min(dat_yrs)
 yr_last <- max(dat_yrs)
 ## log of escapement
 ln_dat_esc <- log(dat_esc$escapement)
 
-
-
-
-
-
-
-###DD: Loads age comp data
 dat_age <- read.csv(paste0(ex_url,fn_age))
 dat_age <- dat_age[which(dat_age$year %in% dat_yrs),]
 ## drop year col & first age_min+age_skip rows
 dat_age <- dat_age[-(1:(age_min+age_skip)),-1]
 ## num of age classes
 A <- age_max-age_min+1
-## add row(s) of NA's for forecast years
-#dat_age <- rbind(dat_age,matrix(0,n_fore,A,dimnames=list(n_yrs+seq(n_fore),colnames(dat_age))))
+## compute average age comp for later use
+p <- dat_age/apply(dat_age,1,FUN = "sum")
+p <- (apply(p,2,FUN = "mean"))
 ## total num of age obs by cal yr
 dat_age[,"sum"] <- apply(dat_age,1,sum)
 ## row indices for any years with no obs age comp
@@ -158,36 +116,27 @@ dat_age[idx_NA_yrs,"sum"] <- A
 ## convert class
 dat_age <- as.matrix(dat_age)
 
-
-
-###DD: Loads harvest data
 ## harvest
 dat_harv <- read.csv(paste0(ex_url,fn_harv))
 dat_harv <- dat_harv[which(dat_harv$year %in% dat_yrs),]
 ## drop year col
 dat_harv <- (dat_harv$ER)
 
-
-
 cat("
 model {
-    ##--------
-    ## PRIORS
-    ##--------
+##--------
+## PRIORS
+##--------
     ## alpha = exp(a) = intrinsic productivity
     alpha ~ dunif(0.1,10);
-    mu_BH_a <- log(alpha);
-    E_BH_a <- mu_BH_a + sigma_r/(2 - 2*phi^2);
+    mu_Rkr_a <- log(alpha);
+    E_Rkr_a <- mu_Rkr_a + sigma_r/2;
     ## strength of dens depend
-    beta ~ dunif(0,0.01);
-    ## AR(1) coef for proc errors
-    phi ~ dunif(-0.999,0.999);
+    beta ~ dunif(0,0.1);
     ## process variance for recruits model
     sd_r ~ dunif(0.001,20);
     tau_r <- pow(sd_r,-2);
     sigma_r <- pow(sd_r,2);
-    ## innovation in first year
-    innov_1 ~ dnorm(0,tau_r*(1-phi*phi));
     ## obs variance for spawners
     sd_s ~ dunif(0.001,20);
     tau_s <- pow(sd_s,-2);
@@ -215,13 +164,13 @@ model {
     ##------------
     ## 1st brood yr requires different innovation
     ## predicted recruits in BY t
-    E_ln_Rec[1] <- mu_BH_a + ln_Sp[1] - log(1 + beta*Sp[1]) + phi*innov_1;
+    E_ln_Rec[1] <- ln_Sp[1] - beta*Sp[1] + mu_Rkr_a;
     tot_ln_Rec[1] ~ dnorm(E_ln_Rec[1],tau_r);
     res_ln_Rec[1] <- tot_ln_Rec[1] - E_ln_Rec[1];
     ## median of total recruits
     tot_Rec[1] <- exp(tot_ln_Rec[1]);
-    ## R/S
-    ln_RS[1] <- tot_ln_Rec[1] - ln_Sp[1];
+## R/S
+ln_RS[1] <- tot_ln_Rec[1] - ln_Sp[1];
     ## brood-yr recruits by age
     for(a in 1:A) {
     Rec[1,a] <- max(1,tot_Rec[1] * pi_vec[1,a]);
@@ -229,7 +178,7 @@ model {
     ## brood years 2:(n_yrs-age_min)
     for(t in 2:(n_yrs-age_min)) {
     ## predicted recruits in BY t
-    E_ln_Rec[t] <- mu_BH_a + ln_Sp[t] - log(1 + beta*Sp[t]) + phi*res_ln_Rec[t-1];
+    E_ln_Rec[t] <- ln_Sp[t] - beta*Sp[t] + mu_Rkr_a;
     tot_ln_Rec[t] ~ dnorm(E_ln_Rec[t],tau_r);
     res_ln_Rec[t] <- tot_ln_Rec[t] - E_ln_Rec[t];
     ## median of total recruits
@@ -269,41 +218,43 @@ model {
     ## multinomial for age comp
     dat_age[i,1:A] ~ dmulti(age_v[i,1:A],dat_age[i,A+1]);
     lp_age[i] <- logdensity.multi(dat_age[i,1:A],age_v[i,1:A],dat_age[i,A+1]);
-    }
-    ## step 2: info from complete broods
-    ## first cal yr of this grp is first brood yr + age_max
-    for(i in (A-age_skip):(n_yrs-age_min-age_skip)) {
-    for(a in 1:A) {
-    Run[i,a] <- Rec[(age_skip+i)-a+1,a];
-    }
-    ## total run size
-    tot_Run[i+age_min+age_skip] <- sum(Run[i,1:A]);
-    ## predicted age-prop vec for multinom
-    for(a in 1:A) {
-    age_v[i,a] <- Run[i,a] / tot_Run[i+age_min];
-    }
-    ## multinomial for age comp
-    dat_age[i,1:A] ~ dmulti(age_v[i,1:A],dat_age[i,A+1]);
-    lp_age[i] <- logdensity.multi(dat_age[i,1:A],age_v[i,1:A],dat_age[i,A+1]);
-    }
-    ## get predicted calendar year spawners
-    ## first cal yr is first brood yr
-    for(t in 1:(n_yrs)) {
-    ## obs model for spawners
-    Sp[t] <- max(1,tot_Run[t] *(1 - dat_harv[t]));
-    ln_Sp[t] <- log(Sp[t]);
-    ln_dat_esc[t] ~ dnorm(ln_Sp[t], tau_s);
-    lp_esc[t] <- logdensity.norm(ln_dat_esc[t],ln_Sp[t], tau_s);
-    }
-    } ## end model description
-    ", file="IPM_BH_AR.txt")
-
+}
+## step 2: info from complete broods
+## first cal yr of this grp is first brood yr + age_max
+for(i in (A-age_skip):(n_yrs-age_min-age_skip)) {
+for(a in 1:A) {
+Run[i,a] <- Rec[(age_skip+i)-a+1,a];
+}
+## total run size
+tot_Run[i+age_min+age_skip] <- sum(Run[i,1:A]);
+## predicted age-prop vec for multinom
+for(a in 1:A) {
+age_v[i,a] <- Run[i,a] / tot_Run[i+age_min];
+}
+## multinomial for age comp
+dat_age[i,1:A] ~ dmulti(age_v[i,1:A],dat_age[i,A+1]);
+lp_age[i] <- logdensity.multi(dat_age[i,1:A],age_v[i,1:A],dat_age[i,A+1]);
+}
+## get predicted calendar year spawners
+## first cal yr is first brood yr
+for(t in 1:(n_yrs)) {
+## obs model for spawners
+Sp[t] <- max(1,tot_Run[t] * (1 - dat_harv[t]));
+ln_Sp[t] <- log(Sp[t]);
+ln_dat_esc[t] ~ dnorm(ln_Sp[t], tau_s);
+lp_esc[t] <- logdensity.norm(ln_dat_esc[t],ln_Sp[t], tau_s);
+}
+} ## end model description
+", file="IPM_RK.txt")
 
 ## 1. data to pass to JAGS
 dat_jags <- c("dat_age","ln_dat_esc","dat_harv",
               "n_yrs","A","age_min","age_max","age_skip")
 ## 2. model params/states for JAGS to return
-par_jags <- c("lp_age","lp_esc")
+par_jags <- c("alpha","E_Rkr_a","mu_Rkr_a","beta",
+              "lp_age","lp_esc",
+              "Sp","Rec","tot_ln_Rec","ln_RS","pi_vec",
+              "sigma_r","sigma_s","res_ln_Rec")
 ## 3. MCMC control params
 ## MCMC parameters
 mcmc_chains <- 4
@@ -312,22 +263,16 @@ mcmc_burn <- 1e5
 mcmc_thin <- 100
 ## total number of MCMC samples
 mcmc_samp <- (mcmc_length-mcmc_burn)*mcmc_chains/mcmc_thin
-## Eqn 1
-init_vals_AR <- function() {
+init_vals <- function() {
   list(alpha=2,
        beta=1/exp(mean(ln_dat_esc, na.rm=TRUE)),
-       pi_tau=1, pi_eta=rep(1,A),
-       pi_vec=matrix(c(0.020,0.219,0.581,0.179),n_yrs-age_min,A,byrow=TRUE),
+       pi_tau=1,
+       pi_eta=rep(1,A),
+       pi_vec=matrix(c(0.0065,0.1187,0.5800,0.2948),n_yrs-age_min,A,byrow=TRUE),
        Rec_mu=log(1000),
        Rec_sig=0.1,
-       tot_ln_Rec=rep(log(1000),n_yrs-age_min),
-       innov_1=0,
-       phi=0.5)
+       tot_ln_Rec=rep(log(1000),n_yrs-age_min))
 }
-
-
-## empty list for fits
-mod_fits <- vector("list", 1)
 ## list of model info for JAGS
 mod_jags <- list(data=dat_jags,
                  parameters.to.save=par_jags,
@@ -335,67 +280,55 @@ mod_jags <- list(data=dat_jags,
                  n.iter=as.integer(mcmc_length),
                  n.burnin=as.integer(mcmc_burn),
                  n.thin=as.integer(mcmc_thin))
+## fit model
+mod_jags$inits <- init_vals
+mod_jags$model.file <- "IPM_RK.txt"
+mod_fit <- do.call(jags.parallel, mod_jags)
 
-# mod_jags$parameters.to.save <- c("alpha","E_BH_a","mu_BH_a","beta",
-#                                  "lp_age","lp_esc",
-#                                  "Sp","Rec","tot_ln_Rec","ln_RS","pi_vec",
-#                                  "sigma_r","sigma_s","res_ln_Rec")
+## Rhat values for all parameters
+rh <- mod_fit$BUGSoutput$summary[,"Rhat"]
+## histogram of Rhat values for all parameters
+par(mai=c(0.9,0.9,0.3,0.1))
+hist(rh, breaks=seq(1,ceiling(max(rh)/0.01)*0.01,by=0.0001),main="",
+     col=rgb(0,0,255,alpha=50,maxColorValue=255),border="blue3",xlab=expression(italic(R[hat])))
 
-mod_jags$parameters.to.save <- c("alpha","E_Rkr_a","mu_Rkr_a","beta",
-                                 "lp_age","lp_esc",
-                                 "Sp","Rec","tot_ln_Rec","ln_RS","pi_vec",
-                                 "sigma_r","sigma_s","res_ln_Rec")
+## Rhat values > threshold
+bad_Rhat <- rh[rh>Rhat_thresh]
+## prop of params with Rhat > threshold
+round(length(bad_Rhat)/length(rh),3)
+
+## param names
+par_names <- sub("\\[.*","",names(bad_Rhat))
+## number of Rhat > threshold by param name
+table(par_names)
+
+## index values for offenders
+idx <- as.integer(sub("(^.*\\[)([0-9]{1,3})(.*)","\\2",names(bad_Rhat)))
+## data frame of offenders
+(df <- data.frame(par=par_names, index=idx))
 
 
-## fit AR(1) models
-mod_jags$inits <- init_vals_AR
-## B-H
-mod_jags$model.file <- "IPM_BH_AR.txt"
-#mod_fits[[1]] <- do.call(jags.parallel, mod_jags)
-
-#BevHolt.jags <- jags(data = mod_jags$data, inits = mod_jags$inits, parameters.to.save = mod_jags$parameters.to.save, model.file = "C:\\Users\\dappdrd\\Desktop\\Management Obj\\Skagit Code\\BevHoltAR.txt",
-BevHolt.jags <- jags(data = mod_jags$data, inits = mod_jags$inits, parameters.to.save = mod_jags$parameters.to.save, model.file = "C:\\Users\\dappdrd\\Desktop\\Management Obj\\Skagit Code\\RickerAR.txt",
-                    n.chains = mod_jags$n.chains, n.iter = mod_jags$n.iter, n.burnin = mod_jags$n.burnin, n.thin = mod_jags$n.thin)
-
-
-
-
+tbl_smry <- mod_fit$BUGSoutput$summary[c("alpha","E_Rkr_a","beta"),
+                                       c("mean","sd","2.5%","50%","97.5%")]
+print(tbl_smry,digits=3,quote=FALSE,justify="right")
 
 layout(matrix(c(1,1,2,3),2,2),c(3,2),c(1,1))
 CI_vec <- c(0.025,0.5,0.975)
 offSet <- 0.06
-
 MC <- 100
 set.seed(123)
 idx <- sample(seq(mcmc_samp),MC)
-
 ## posterior of spawners
-sDat <- apply(BevHolt.jags$BUGSoutput$sims.list$Sp,2,quantile,CI_vec)
+sDat <- apply(mod_fit$BUGSoutput$sims.list$Sp,2,quantile,CI_vec)
 sDat <- sDat[,1:(n_yrs-age_min)]
 ## posterior of recruits
-rDat <- exp(apply(BevHolt.jags$BUGSoutput$sims.list$tot_ln_Rec,2,quantile,CI_vec))
+rDat <- exp(apply(mod_fit$BUGSoutput$sims.list$tot_ln_Rec,2,quantile,CI_vec))
 ## median values for a & b
-#aa <- apply(BevHolt.jags$BUGSoutput$sims.list$mu_BH_a,1,median)
-bb <- BevHolt.jags$BUGSoutput$sims.list$beta
-
-aa <- apply(BevHolt.jags$BUGSoutput$sims.list$alpha,1,median)
-
-#agessss <-apply(BevHolt.jags$BUGSoutput$sims.list$pi_vec,1,median)
-print(BevHolt.jags)
-
-mcmc = BevHolt.jags$BUGSoutput$sims.matrix
-Age2By1 = median(mcmc[, "pi_vec[3,1]"])
-Age3By1 = median(mcmc[, "pi_vec[3,2]"])
-Age4By1 = median(mcmc[, "pi_vec[3,3]"])
-Age5By1 = median(mcmc[, "pi_vec[3,4]"])
-
-perc <- Age2By1 + Age3By1 + Age4By1 + Age5By1
-
-tbl_smry <- BevHolt.jags$BUGSoutput$summary[c("alpha","E_Rkr_a","beta"),
-                                       c("mean","sd","2.5%","50%","97.5%")]
-print(tbl_smry,digits=3,quote=FALSE,justify="right")
-
-dd <- 3000
+aa <- apply(mod_fit$BUGSoutput$sims.list$mu_Rkr_a,1,median)
+bb <- mod_fit$BUGSoutput$sims.list$beta
+# aa <- median(mod_fit$BUGSoutput$sims.list$alpha)
+## empty plot space for spawner-recruit relationships
+dd <- 500
 yM <- Re2prec(max(rDat),"ceiling",dd)
 #yM <- 30000
 xM <- Re2prec(max(sDat),"ceiling",dd)
@@ -405,16 +338,15 @@ plot(sDat[2,],rDat[2,], xlim=c(0,xM), ylim=c(0,yM), pch=16, col="blue3", type="n
      xaxt="n", yaxt="n")
 axis(1, at=seq(0,xM,dd*2), labels=seq(0,xM,dd*2)/1000)
 axis(2, at=seq(0,yM,dd*2), labels=seq(0,yM,dd*2)/1000)
-
-for(i in 1:MC) { lines(aa*seq(0,xM, length.out = 4000)/(1+bb*seq(0,xM, length.out = 4000)), col="darkgray") }
-
+for(i in 1:MC) { lines((seq(xM)*exp(aa[idx[i]]-bb[idx[i]]*seq(xM))), col="darkgray") }
+# lines(aa*seq(0,xM)/(1+bb*seq(0,xM)), col="darkgray")
 ## add S-R estimates and medians
 abline(a=0,b=1,lty="dashed")
 nCB <- n_yrs-age_max
+
 points(sDat[2,1:nCB],rDat[2,1:nCB], xlim=c(0,xM), ylim=c(0,yM), pch=16, col="blue3")
 segments(sDat[2,1:nCB],rDat[1,1:nCB],sDat[2,1:nCB],rDat[3,1:nCB], col="blue3")
 segments(sDat[1,1:nCB],rDat[2,1:nCB],sDat[3,1:nCB],rDat[2,1:nCB], col="blue3")
-
 nTB <- dim(sDat)[2]
 clr <- rgb(100, 0, 200, alpha=seq(200,100,length.out=age_max-age_min), maxColorValue=255)
 segments(sDat[2,(nCB+1):nTB],rDat[1,(nCB+1):nTB],sDat[2,(nCB+1):nTB],rDat[3,(nCB+1):nTB], col=clr)
@@ -423,28 +355,54 @@ points(sDat[2,(nCB+1):nTB],rDat[2,(nCB+1):nTB],
        xlim=c(0,xM), ylim=c(0,yM), pch=16, col=clr)
 text(x=par()$usr[1]+par()$pin[2]/par()$pin[1]*offSet*diff(par()$usr[1:2]),
      y=par()$usr[4]-offSet*diff(par()$usr[3:4]),"(a)")
-
-
-
-
-
-
-
-
-
+## posterior for alpha
+clr <- rgb(0, 0, 255, alpha = 50, maxColorValue = 255)
+a_thresh <- 10
+par(mai=c(0.8,0.4,0.3,0.1))
+## Ricker alpha
+R_alpha_est <- mod_fit$BUGSoutput$sims.list$alpha
+alphaCI <- quantile(R_alpha_est,c(0.025,0.5,0.975))
+R_alpha_est[R_alpha_est>a_thresh] <- a_thresh
+hist(R_alpha_est,freq=FALSE,xlab="",main="",breaks=seq(0,a_thresh,0.2),
+     col=clr, border="blue3", ylab="", cex.lab=1.2, yaxt="n")
+aHt <- (par()$usr[4]-par()$usr[3])/12
+arrows(alphaCI,par()$usr[3],alphaCI,par()$usr[3]-aHt,
+       code=1,length=0.05,xpd=NA,col="blue3",lwd=1.5)
+mtext(expression(Instrinsic~productivity~(alpha)), 1, line=3, cex=1)
+text(x=par()$usr[1]+par()$pin[2]/par()$pin[1]*offSet*diff(par()$usr[1:2]),
+     y=par()$usr[4]-offSet*diff(par()$usr[3:4]),"(b)")
+## posterior for K
+par(mai=c(0.8,0.4,0.3,0.1))
+aa <- matrix(mod_fit$BUGSoutput$sims.array[,,"E_Rkr_a"],ncol=1)
+bb <- matrix(mod_fit$BUGSoutput$sims.array[,,"beta"],ncol=1)
+R_b_est <- (aa)/bb
+R_b_est <- R_b_est[R_b_est > 0]
+R_b_CI <- quantile(R_b_est,c(0.025,0.5,0.975))
+R_b_est[R_b_est>8e3] <- 8e3
+brks <- seq(Re2prec(min(R_b_est),"floor",2000),8e3,length.out=length(seq(0,9,0.2)))
+hist(R_b_est, freq=FALSE, breaks=brks, col=clr, border="blue3",
+     xlab="", xaxt="n", yaxt="n",
+     main="", ylab="", cex.lab=1.2)
+axis(1, at=seq(Re2prec(min(R_b_est),"floor",2000),8000,1000))
+aHt <- (par()$usr[4]-par()$usr[3])/12
+arrows(R_b_CI,par()$usr[3],R_b_CI,par()$usr[3]-aHt,
+       code=1,length=0.05,xpd=NA,col="blue3",lwd=1.5)
+mtext(expression(Carrying~capacity~(italic(K))), 1, line=3, cex=1)
+text(x=par()$usr[1]+par()$pin[2]/par()$pin[1]*offSet*diff(par()$usr[1:2]),
+     y=par()$usr[4]-offSet*diff(par()$usr[3:4]),"(c)")
 
 # abbreviations for ref points
-ref_names <- c("MSY","Smsy","Umsy","Umax","Seq","Scrit")
+ref_names <- c("MSY","Smsy","Umsy","Umax","Seq")
 # proportions of MSY to consider
 yld_prop <- c(0.75,0.85,0.95)
-aa <- matrix(BevHolt.jags$BUGSoutput$sims.array[,,"E_Rkr_a"],ncol=1)
-alpha <- matrix(BevHolt.jags$BUGSoutput$sims.array[,,"alpha"],ncol=1)
+aa <- matrix(mod_fit$BUGSoutput$sims.array[,,"E_Rkr_a"],ncol=1)
+alpha <- matrix(mod_fit$BUGSoutput$sims.array[,,"alpha"],ncol=1)
 mcmc <- length(aa)
 # empty matrix for ref pts
 ref.pts <- matrix(NA,mcmc,length(ref_names))
 colnames(ref.pts) <- ref_names
 # spawner series for optimal yield profile
-SS <- seq(100,3e4,100)
+SS <- seq(100,5e3,100)
 # empty matrix for optimal yield profiles
 OYP <- matrix(0,length(SS),length(yld_prop))
 for(i in 1:mcmc) {
@@ -454,11 +412,12 @@ for(i in 1:mcmc) {
   ref.pts[i,"MSY"] <- ref.pts[i,"Smsy"]*((exp(aa[i]-bb[i]*ref.pts[i,"Smsy"])) - 1)
   # harvest rate at MSY
   ref.pts[i,"Umsy"] <- (1 - lambert_W0(exp(1-aa[i])))
+  # max harvest rate
   ref.pts[i,"Umax"] <- 1 - 1/alpha[i]
   # equilibrium escapement
   ref.pts[i,"Seq"] <- aa[i]/bb[i]
   # critical escapement
-  ref.pts[i,"Scrit"] <- .05*ref.pts[i,"Seq"]
+  #ref.pts[i,"Scrit"] <- .05*ref.pts[i,"Seq"]
   # yield over varying S
   yield <- SS*(exp(aa[i]-bb[i]*SS) - 1)
   for(j in 1:length(yld_prop)) {
@@ -475,24 +434,114 @@ for(i in hh) {
   Pr_over[i,"Umsy"] <- sum(ref.pts[,"Umsy"] < i/100)/mcmc_samp
   Pr_over[i,"Umax"] <- sum(ref.pts[,"Umax"] < i/100)/mcmc_samp
 }
-## observed exploitation rate & posterior spawner abundance
-Sp_ts <- BevHolt.jags$BUGSoutput$sims.list$Sp[,1:n_yrs]
+## posterior spawner abundance
+Sp_ts <- mod_fit$BUGSoutput$sims.list$Sp[,1:n_yrs]
 
+layout(matrix(c(2,1,4,3),2,2),heights=c(1,5))
+## OYP
+par(mai=c(0.9,0.9,0,0), omi=c(0,0,0.1,0.1))
+x_lp <- yld_prop
+for(i in 1:length(x_lp)) {
+  x_lp[i] <- SS[max(which(OYP[,i] == max(OYP[,i]) | abs(OYP[,i] - (yld_prop[i]-0.3)) <= 0.05))]
+}
+matplot(SS, OYP, type="l", lty="solid", las=1, col=c("slateblue","blue","darkblue"), lwd=2,
+        xlab="Spawners", ylab="Probability of X% of MSY", cex.lab=1.2,
+        main="", ylim=c(0,1))
+points(x=x_lp, y=yld_prop-0.3, pch=21, cex=3.5, col="white", bg="white")
+text(x=x_lp, y=yld_prop-0.3, paste0(yld_prop*100,"%"),
+     col=c("slateblue","blue","darkblue"), cex=0.7)
+text(x=par()$usr[1]+par()$pin[2]/par()$pin[1]*offSet*diff(par()$usr[1:2]),
+     y=par()$usr[4]-offSet*diff(par()$usr[3:4]),"(a)")
+## posterior spawner abundance over all years
+par(mai=c(0,0.9,0.05,0))
 
+hist(Sp_ts[Sp_ts<3e4], col=clr, border="blue3", breaks=40,
+     main="", yaxs="i", xaxt="n",yaxt="n",ylab="")
+## prob of overfishing
+par(mai=c(0.9,0.9,0,0))
+matplot(Pr_over, type="l", las=1, lwd=2, lty="solid", col=c("slateblue","blue","darkblue"),
+        ylab="Probability of overfishing", cex.lab=1.2,
+        xlab="Harvest rate", xaxt="n")
+axis(1,seq(0,100,20),seq(0,100,20)/100)
+x_lp <- c(0,0,0)
+for(i in 1:length(x_lp)) {
+  x_lp[i] <- max(which(abs(Pr_over[,i] - 0.5) <= 0.05))
+}
+points(x=x_lp, y=rep(0.5,3), pch=21, cex=4, col="white", bg="white")
+text(x=x_lp, y=0.5, expression(U[M75], U[MSY], U[Max]),
+     col=c("slateblue","blue","darkblue"), cex=0.8)
+text(x=par()$usr[1]+par()$pin[2]/par()$pin[1]*offSet*diff(par()$usr[1:2]),
+     y=par()$usr[4]-offSet*diff(par()$usr[3:4]),"(b)")
 
+tbl_refpt_smry <- apply(ref.pts,2,quantile,CI_vec)
+print(tbl_refpt_smry,digits=3,quote=FALSE,justify="right")
 
+pDat <- apply(mod_fit$BUGSoutput$sims.list$Sp,2,quantile,CI_vec)
+ypMin <- min(pDat[,1:n_yrs])
+ypMax <- max(pDat[,1:n_yrs])
+t_idx_T <- seq(yr_frst,length.out=n_yrs)
+par(mai=c(0.8,0.8,0.1,0.1), omi=c(0,0.2,0.1,0.2))
+plot(t_idx_T,pDat[3,1:n_yrs], ylim=c(ypMin,ypMax), type="n", log="y", xaxt="n", yaxt="n",
+     xlab="Year", ylab="Spawners", main="", cex.lab=1.2)
+polygon(c(t_idx_T,rev(t_idx_T)),c(pDat[3,1:n_yrs],rev(pDat[1,1:n_yrs])), col=clr, border=NA)
+lines(t_idx_T, pDat[2,1:n_yrs], col="blue3", lwd=2)
+points(seq(yr_frst,length.out=n_yrs), exp(ln_dat_esc), pch=16, cex=1)
+axis(1,at=seq(1986,2014,5))
+axis(2,at=c(500,1000,3000))
 
+CI_vec <- c(0.025,0.5,0.975)
+pDat <- apply(mod_fit$BUGSoutput$sims.list$Rec,c(1,2),sum)
+pDat <- apply(apply(pDat,2,sort),2,function(x) { x[mcmc_samp*CI_vec] })
+ypMin <- min(pDat)
+ypMax <- max(pDat)
+t_idx_a <- seq(yr_frst,length.out=n_yrs-age_min)
+par(mai=c(0.8,0.8,0.1,0.1), omi=c(0,0.2,0.1,0.2))
+plot(t_idx_a,pDat[3,], ylim=c(ypMin,ypMax), type="n", log="y", yaxt="n",
+     xlab="Brood year", ylab="Recruits", main="", cex.lab=1.2)
+axis(2,at=c(500,1000,3000))
+polygon(c(t_idx_a,rev(t_idx_a)),c(pDat[3,],rev(pDat[1,])), col=clr, border=NA)
+lines(t_idx_a, pDat[2,], col="blue3", lwd=2)
 
+pDat <- apply(mod_fit$BUGSoutput$sims.list$ln_RS,2,sort)
+pDat <- apply(pDat,2,function(x) { x[mcmc_samp*CI_vec] })
+pDat[2,] <- apply(mod_fit$BUGSoutput$sims.list$ln_RS,2,median)
+ypMin <- min(pDat)
+ypMax <- max(pDat)
+par(mai=c(0.8,0.8,0.1,0.1), omi=c(0,0.2,0.1,0.2))
+plot(t_idx_a,pDat[3,], ylim=c(ypMin,ypMax), type="n", #log="y",
+     xlab="Brood year", ylab="ln(R/S)", main="", cex.lab=1.2)
+abline(h=0, lty="dashed")
+polygon(c(t_idx_a,rev(t_idx_a)),c(pDat[3,],rev(pDat[1,])), col=clr, border=NA)
+lines(t_idx_a, pDat[2,], col="blue3", lwd=2)
 
+par(mai=c(0.8,0.8,0.1,0.1), omi=c(0,0.1,0.2,0.2))
+clr <- rgb(0, 0, 255, alpha = 40, maxColorValue = 255)
+age_est <- t(apply(apply(mod_fit$BUGSoutput$sims.list$pi_vec,c(3,2),mean),2,cumsum))
+nRec <- n_yrs-age_min
+plot(t_idx_a, rep(1,nRec), ylab="Proportion", xlab="Brood year", ylim=c(0,1), las=1,
+     xaxs="i", yaxs="i", type="n", lty="solid", col="blue3", cex.lab=1.2)
+for(i in c(1,2,3,4)) {
+  polygon(c(t_idx_a,rev(t_idx_a)),c(age_est[,i],rep(0,nRec)), col=clr, border=NA)
+}
+lbl <- apply(cbind(c(0,age_est[nRec,-A]),age_est[nRec,]),1,mean)
+text(par()$usr[2],par()$usr[4]*1.05,"Age", xpd=NA, pos=4, offset=0.05, col="black", cex=0.8)
+text(par()$usr[2],lbl[1:4],seq(2,5), xpd=NA, pos=4, col="black", cex=0.7)
 
-
-
-
+t_idx_a <- seq(yr_frst,length.out=n_yrs-age_min)
+pDat <- apply(mod_fit$BUGSoutput$sims.list$res_ln_Rec,2,quantile,CI_vec)
+ypMin <- min(pDat)
+ypMax <- max(pDat)
+par(mai=c(0.8,0.8,0.1,0.1), omi=c(0,0.2,0.1,0.2))
+plot(t_idx_a,pDat[3,], ylim=c(ypMin,ypMax), type="n", #log="y",
+     xlab="Brood year", ylab="Innovations", main="", cex.lab=1.2)
+abline(h=0, lty="dashed")
+polygon(c(t_idx_a,rev(t_idx_a)),c(pDat[3,],rev(pDat[1,])), col=clr, border=NA)
+lines(t_idx_a, pDat[2,], col="blue3", lwd=2)
 
 ## ----VRAP_sim------------------------------------------------------------
 ## posterior S/R parameters
-aa <- BevHolt.jags$BUGSoutput$sims.list$E_Rkr_a
-bb <- BevHolt.jags$BUGSoutput$sims.list$beta
+aa <- mod_fit$BUGSoutput$sims.list$E_Rkr_a
+bb <- mod_fit$BUGSoutput$sims.list$beta
 ## management error mean and std dev. (FRAM post season ER/pre- season ER)
 me_mean <- 1.07
 me_sd <- 0.19
@@ -503,20 +552,23 @@ ER_min <- 0.15
 me <- 0
 ## number of years for each simulation: starting with 25 since this is what NOAA requires
 numYears <- 25
+
 ## number of simulations
 numSim <- 1000
 ## range of target harvest rates to explore
 ER_range <- seq(0,0.8,.01)
 ## start with most recent five spawner years in time series
-S_start <- apply(BevHolt.jags$BUGSoutput$sims.list$Sp,2,quantile,probs=CI_vec)[2,(n_yrs - 4):n_yrs]
+S_start <- apply(mod_fit$BUGSoutput$sims.list$Sp,2,quantile,probs=CI_vec)[2,(n_yrs - 4):n_yrs]
 ## SMSY under average conditions
 Smsy <- quantile(ref.pts[,"Smsy"],CI_vec)
-Scrit <- quantile(ref.pts[,"Scrit"],CI_vec)
+#Scrit <- quantile(ref.pts[,"Scrit"],CI_vec)
+UET <- Smsy[2]
+ECRIT <- 475
 ## maturation schedule
-matSched_2 <- apply(BevHolt.jags$BUGSoutput$sims.list$pi_vec[,,1],2,quantile,CI_vec)
-matSched_3 <- apply(BevHolt.jags$BUGSoutput$sims.list$pi_vec[,,2],2,quantile,CI_vec)
-matSched_4 <- apply(BevHolt.jags$BUGSoutput$sims.list$pi_vec[,,3],2,quantile,CI_vec)
-matSched_5 <- apply(BevHolt.jags$BUGSoutput$sims.list$pi_vec[,,4],2,quantile,CI_vec)
+matSched_2 <- apply(mod_fit$BUGSoutput$sims.list$pi_vec[,,1],2,quantile,CI_vec)
+matSched_3 <- apply(mod_fit$BUGSoutput$sims.list$pi_vec[,,2],2,quantile,CI_vec)
+matSched_4 <- apply(mod_fit$BUGSoutput$sims.list$pi_vec[,,3],2,quantile,CI_vec)
+matSched_5 <- apply(mod_fit$BUGSoutput$sims.list$pi_vec[,,4],2,quantile,CI_vec)
 matSched <- rbind(matSched_2[2,],matSched_3[2,],matSched_4[2,],matSched_5[2,])
 ## take 100 random samples of S/R parameters from posterior distribution
 sample <- 100
@@ -526,7 +578,7 @@ samplePosterior <- sample(1:mcmc,sample,replace = TRUE)
 a <- aa[samplePosterior]
 b <- bb[samplePosterior]
 ## median posterior process standard deviation
-median_sd_r <- median(BevHolt.jags$BUGSoutput$sims.list$sigma_r)^0.5
+median_sd_r <- median(mod_fit$BUGSoutput$sims.list$sigma_r)^0.5
 ## output arrays for RER criteria
 p_UET <- array(data = NA,dim = c(length(ER_range),(sample + 1)))
 p_UET_10pct <- array(data = NA,dim = c(length(ER_range),(sample + 1)))
@@ -589,57 +641,24 @@ for(i in 1:(sample + 1)){
     }# next sim
     c <- c+1
   }#next Er
-  p_UET[,i] <- apply(sp[,27:30,],3,function(x){length(which(x > Smsy[2]))/length(x)})
+  p_UET[,i] <- apply(sp[,27:30,],3,function(x){length(which(x > UET))/length(x)})
   p_UET_10pct[,i] <- p_UET[1,i] - p_UET[,i]
-  p_Crit_temp <- apply(sp[,5:30,],3,function(x){length(which(x < Scrit[2]))/length(x)})
+  p_Crit_temp <- apply(sp[,5:30,],3,function(x){length(which(x < ECRIT))/length(x)})
   p_Crit_5pct[,i] <- p_Crit_temp - p_Crit_temp[1]
 }## next sample
 ## compute median RER based on criterion
 RER_UET_median <- ER_range[length(which(p_UET[,1] >= 0.80))]
 RER_UET_10pct_median <- ER_range[length(which(p_UET_10pct[,1] <= 0.10))]
 RER_Crit_5pct_median <- ER_range[length(which(p_Crit_5pct[,1] <= 0.05))]
-##Here are probability profiles for the three criteria assessed accross the range of target exploitation rates from
-##0% - 80%
+
 ## plot RER profiles for each criterion
 layout(matrix(seq(1,3,1),1,3),heights = 4,widths = c(4,4,4,4))
 par(mai=c(0.15,0.15,0.15,0.15), omi=c(0.5,0.5,0.5,0.5))
-plot(p_Crit_5pct[,1]~ER_range,xlab = "",ylab = "",type = "l", bty = "n",lwd = 2,main = "% > LET.base - % points(RER_Crit_5pct_median",0.05,pch = 16,col = "red",cex = 1.5)
+plot(p_Crit_5pct[,1]~ER_range,xlab = "",ylab = "",type = "l", bty = "n",lwd = 2,main = "% > LET.base - % points(RER_Crit_5pct_median,0.05,pch = 16,col = "red",cex = 1.5)
 abline(h = 0.05,v =RER_Crit_5pct_median,lty = 2, col = "grey" )
 plot(p_UET[,1]~ER_range,xlab = "",ylab = "",type = "l",bty = "n",lwd = 2, main = "% > UET")
 points(RER_UET_median,0.80,pch = 16,col = "red",cex = 1.5)
 abline(h = 0.80,v = RER_UET_median,lty = 2, col = "grey")
-plot(p_UET_10pct[,1]~ER_range,xlab = "",ylab = "",type = "l",bty = "n", lwd = 2, main = "% > UET.base - points(RER_UET_10pct_median",0.10,pch = 16,col = "red",cex = 1.5)
+plot(p_UET_10pct[,1]~ER_range,xlab = "",ylab = "",type = "l",bty = "n", lwd = 2, main = "% > UET.base - points(RER_UET_10pct_median,0.10,pch = 16,col = "red",cex = 1.5)
      abline(h = 0.10,v = RER_UET_10pct_median,lty = 2, col = "grey")
      mtext("Target exploitation rate",1,outer = TRUE,cex = 1.2,line = 2)
-     
-     ##calculate posterior RER distribution
-     RER_UET <- NULL
-     RER_UET_10pct <- NULL
-     RER_Crit_5pct <- NULL
-     for(i in 2:dim(p_UET)[2]){
-       RER_UET[i] <- ER_range[length(which(p_UET[,i] >= 0.80))]
-       RER_UET_10pct[i] <- ER_range[length(which(p_UET_10pct[,i] <= 0.10))]
-       RER_Crit_5pct[i] <- ER_range[length(which(p_Crit_5pct[,i] <= 0.05))]
-     }
-     for(i in 2:dim(p_UET)[2]){
-       RER_UET[i] <- ER_range[length(which(p_UET[,i] >= 0.80))]
-       RER_UET_10pct[i] <- ER_range[length(which(p_UET_10pct[,i] <= 0.10))]
-       RER_Crit_5pct[i] <- ER_range[length(which(p_Crit_5pct[,i] <= 0.05))]
-     }
-     
-     ## plot posterior RER's
-     layout(matrix(seq(1,3,1),1,3),heights = 4,widths = c(4,4,4,4))
-     par(mai=c(0.15,0.15,0.15,0.15), omi=c(0.5,0.5,0.5,0.5))
-     hist(RER_Crit_5pct,col = "grey",main = "RER(<5%)", xlab = "", ylab = "", ylim = c(0,40))
-     abline(v = RER_Crit_5pct_median,lwd = 2)
-     hist(RER_UET,col = "grey", main = "RER(>80%)",xlab = "", ylab = "")
-     abline(v = RER_UET_median,lwd = 2)
-     hist(RER_UET_10pct,col = "grey", main = "RER(<10%",xlab = "",ylab = "")
-     abline(v = RER_UET_10pct_median,lwd = 2)
-     mtext("Target exploitation rate",1,outer = TRUE,cex = 1.2,line = 2)
-     
-     RER_range <- quantile(RER_UET,c(0.025,0.975),na.rm = TRUE)
-     RER_range <- c(RER_range[1],RER_UET_median,RER_range[2])
-     #RER_range <- round(RER_range,2)
-     ## ----summary_tbl
-     print(rbind(Scrit = round(Scrit),Smsy = round(Smsy),RER_range = RER_range))
